@@ -13,9 +13,17 @@ enum LSystemSymbol {
 #[derive(Copy, Clone, Debug)]
 enum Action {
     Rotate(f32),
-    DrawLine(Length),
+    DrawLine(Length, FillColor),
+    DrawCircle(FillColor),
     Push,
     Pop,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum FillColor {
+    Background,
+    Inherit,
+    Rgb(f32, f32, f32),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -27,6 +35,7 @@ enum Variables {
 struct Config {
     position: Point2<f32>,
     radians: f32,
+    color: nannou::color::Rgb,
 }
 
 struct LSystem {
@@ -40,12 +49,13 @@ impl LSystem {
         Config {
             position: Point2::new(0.0, 0.0),
             radians: nannou::prelude::PI * 0.5,
+            color: rgb(0.0, 0.0, 0.0),
         }
     }
 
     fn axiom() -> LSystem {
         LSystem {
-            state: vec![LSystemSymbol::Variable((Variables::A, vec![Action::DrawLine(10.0)]))],
+            state: vec![LSystemSymbol::Variable((Variables::A, vec![Action::DrawLine(10.0, FillColor::Inherit)]))],
             dimensions: Vector2::new(0.0, 10.0),
         }
     }
@@ -59,48 +69,47 @@ impl LSystem {
 
         for symbol in &self.state {
             match symbol {
-                LSystemSymbol::Constant(actions) => {
-                    for action in actions {
-                        match action {
-                            Action::DrawLine(length) => {
-                                let dir = Vector2::new(curr_state.radians.cos(), curr_state.radians.sin()) * *length;
-                                draw.line().start(curr_state.position).end(curr_state.position + dir).finish();
-                                curr_state.position += dir;
-                            },
-                            Action::Rotate(rad) => {
-                                curr_state.radians += *rad;
-                            },
-                            Action::Push => {
-                                stack.push(curr_state);
-                            },
-                            Action::Pop => {
-                                curr_state = stack.pop().unwrap();
-                            }
-                        }
-                    }
+                LSystemSymbol::Constant(actions) | LSystemSymbol::Variable((_, actions)) => {
+                    process_actions(&draw, &mut curr_state, &mut stack, &actions)
                 },
-                LSystemSymbol::Variable((_, actions)) => {
-                    for action in actions {
-                        match action {
-                            Action::DrawLine(length) => {
-                                let dir = Vector2::new(curr_state.radians.cos(), curr_state.radians.sin()) * *length;
-                                draw.line().start(curr_state.position).end(curr_state.position + dir).rgb(0.0, 0.0, 0.0).finish();
-                                curr_state.position += dir;
-                            },
-                            Action::Rotate(rad) => {
-                                curr_state.radians += *rad;
-                            },
-                            Action::Push => {
-                                stack.push(curr_state);
-                            },
-                            Action::Pop => {
-                                curr_state = stack.pop().unwrap();
-                            }
-                        }
-                    }
-                }
             }
         }
+    }
+}
+
+fn process_actions(draw: &Draw, curr_state: &mut Config, stack: &mut Vec<Config>, actions: &[Action]) {
+    for action in actions {
+        match action {
+            Action::DrawLine(length, color) => {
+                let color = get_color(&curr_state, *color);
+                let dir = Vector2::new(curr_state.radians.cos(), curr_state.radians.sin()) * *length;
+                draw.line().start(curr_state.position).end(curr_state.position + dir).color(color).finish();
+                curr_state.position += dir;
+                curr_state.color = color;
+            },
+            Action::DrawCircle(color) => {
+                let color = get_color(&curr_state, *color);
+                curr_state.color = color;
+                draw.ellipse().xy(curr_state.position).wh(Vector2::new(10.0, 10.0)).color(color);
+            },
+            Action::Rotate(rad) => {
+                curr_state.radians += *rad;
+            },
+            Action::Push => {
+                stack.push(*curr_state);
+            },
+            Action::Pop => {
+                *curr_state = stack.pop().unwrap();
+            }
+        }
+    }
+}
+
+fn get_color(curr_state: &Config, color: FillColor) -> nannou::color::Rgb<f32> {
+    match color {
+        FillColor::Inherit => curr_state.color,
+        FillColor::Background => curr_state.color,
+        FillColor::Rgb(r, g, b) => rgb(r, g, b)
     }
 }
 
@@ -115,7 +124,7 @@ fn get_drawing_dimensions(lsys: &LSystem) -> Vector2<f32> {
             LSystemSymbol::Constant(actions) => {
                 for action in actions {
                     match action {
-                        Action::DrawLine(length) => {
+                        Action::DrawLine(length, _) => {
                             let dir = Vector2::new(curr_state.radians.cos(), curr_state.radians.sin()) * *length;
                             curr_state.position += dir;
                             if curr_state.position.x < min.x {
@@ -139,14 +148,15 @@ fn get_drawing_dimensions(lsys: &LSystem) -> Vector2<f32> {
                         },
                         Action::Pop => {
                             curr_state = stack.pop().unwrap();
-                        }
+                        },
+                        _ => (),
                     }
                 }
             },
             LSystemSymbol::Variable((_, actions)) => {
                 for action in actions {
                     match action {
-                        Action::DrawLine(length) => {
+                        Action::DrawLine(length, _) => {
                             let dir = Vector2::new(curr_state.radians.cos(), curr_state.radians.sin()) * *length;
                             curr_state.position += dir;
                             if curr_state.position.x < min.x {
@@ -170,7 +180,8 @@ fn get_drawing_dimensions(lsys: &LSystem) -> Vector2<f32> {
                         },
                         Action::Pop => {
                             curr_state = stack.pop().unwrap();
-                        }
+                        },
+                        _ => (),
                     }
                 }
             }
@@ -199,24 +210,21 @@ where F: Fn(Variables) -> Vec<LSystemSymbol>
 
 fn rules1(var: Variables) -> Vec<LSystemSymbol> {
     use Variables::{A, B};
+    use FillColor::*;
     match var {
         A => vec![
-            LSystemSymbol::Variable((B, vec![Action::DrawLine(10.0)])),
+            LSystemSymbol::Variable((B, vec![Action::DrawLine(10.0, Rgb(0.6, 0.2, 0.8))])),
             LSystemSymbol::Constant(vec![Action::Push, Action::Rotate(f32::PI() * 0.25)]),
-            LSystemSymbol::Variable((A, vec![Action::DrawLine(10.0)])),
+            LSystemSymbol::Variable((A, vec![Action::DrawLine(10.0, Rgb(1.0, 0.2, 0.5)), Action::DrawCircle(Inherit)])),
             LSystemSymbol::Constant(vec![Action::Pop, Action::Rotate(f32::PI() * -0.25)]),
-            LSystemSymbol::Variable((A, vec![Action::DrawLine(10.0)])),
+            LSystemSymbol::Variable((A, vec![Action::DrawLine(10.0, Rgb(0.1, 0.7, 0.7)), Action::DrawCircle(Rgb(0.0, 0.8, 0.2))])),
         ],
         B => vec![
-            LSystemSymbol::Variable((B, vec![Action::DrawLine(10.0)])),
-            LSystemSymbol::Variable((B, vec![Action::DrawLine(10.0)])),
+            LSystemSymbol::Variable((B, vec![Action::DrawLine(10.0, Rgb(0.3, 0.5, 0.8))])),
+            LSystemSymbol::Variable((B, vec![Action::DrawLine(10.0, Inherit)])),
         ],
         _ => vec![],
     }
-}
-
-fn draw_lsystem(lsys: &LSystem) {
-
 }
 
 fn model(_app: &App) -> LSystem {
